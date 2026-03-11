@@ -21,6 +21,8 @@ export default function StaffLayout() {
     { to: `/staff/${businessSlug}/admin/kpis`, label: 'Dashboard / KPIs', icon: '📊' },
     { to: `/staff/${businessSlug}/admin/calendario`, label: 'Calendario', icon: '📅' },
     { to: `/staff/${businessSlug}/admin/necesidades`, label: 'Necesidades / Stock', icon: '📦' },
+    { to: `/staff/${businessSlug}/admin/insumos`, label: 'Insumos', icon: '🧺' },
+    { to: `/staff/${businessSlug}/admin/costos`, label: 'Análisis de Costos', icon: '💰' },
     { to: `/staff/${businessSlug}/admin/roles`, label: 'Mi Equipo', icon: '👥' },
     { to: `/staff/${businessSlug}/admin/configuracion`, label: 'Configuración', icon: '⚙️' },
   ];

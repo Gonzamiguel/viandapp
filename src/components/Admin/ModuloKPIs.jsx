@@ -15,8 +15,9 @@ import {
   Cell,
 } from 'recharts';
 import { Calendar, BarChart3, TrendingUp, TrendingDown } from 'lucide-react';
-import { getPedidos, getRecetario } from '../../firebase/operations';
+import { getRecetario, subscribePedidosRealtime, computePedidosCounts } from '../../firebase/operations';
 import { useBusiness } from '../../context/BusinessContext';
+import KpiGroup from '../Dashboard/KpiGroup';
 
 const COLOR_EMERALD = '#059669';
 const SERVICIOS = [
@@ -41,13 +42,32 @@ export default function ModuloKPIs() {
   const [recetario, setRecetario] = useState([]);
   const [loading, setLoading] = useState(true);
   const [rango, setRango] = useState(getRangoDefault);
+  const [kpiCounts, setKpiCounts] = useState({ total: 0, desayuno: 0, almuerzo: 0, cena: 0 });
 
   useEffect(() => {
-    if (!businessId) return;
-    Promise.all([getPedidos(businessId), getRecetario(businessId)]).then(([p, r]) => {
-      setPedidosRaw(p);
-      setRecetario(r);
-    }).finally(() => setLoading(false));
+    if (!businessId) return undefined;
+    let unsub = () => {};
+    let cancelled = false;
+    setLoading(true);
+
+    getRecetario(businessId).then((r) => {
+      if (!cancelled) setRecetario(r);
+    });
+
+    unsub = subscribePedidosRealtime(
+      businessId,
+      (list) => {
+        setPedidosRaw(list);
+        setKpiCounts(computePedidosCounts(list));
+        setLoading(false);
+      },
+      () => setLoading(false)
+    );
+
+    return () => {
+      cancelled = true;
+      unsub?.();
+    };
   }, [businessId]);
 
   const pedidosFiltrados = useMemo(() => {
@@ -116,6 +136,8 @@ export default function ModuloKPIs() {
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-bold text-gray-800">Dashboard / KPIs</h1>
+
+      <KpiGroup counts={kpiCounts} loading={loading} />
 
       {/* Selector de rango de fechas */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 flex flex-wrap items-center gap-4">

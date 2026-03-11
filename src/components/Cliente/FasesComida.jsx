@@ -5,7 +5,7 @@
  */
 
 import { useState, useEffect } from 'react';
-import { Coffee, UtensilsCrossed, Moon, Check, Lock } from 'lucide-react';
+import { Coffee, UtensilsCrossed, Moon, Check, Lock, ChevronLeft, ChevronRight } from 'lucide-react';
 import { getMenusRango, getPlatoById, createPedido, getConfiguracion } from '../../firebase/operations';
 import { useBusiness } from '../../context/BusinessContext';
 import { esFechaPermitida, getMensajeRestriccion } from '../../utils/reservaHelpers';
@@ -21,10 +21,12 @@ export default function FasesComida({ fechaInicio, fechaFin, guestData, onBack }
   const [config, setConfig] = useState({ margenReservaHoras: 72 });
   const [menus, setMenus] = useState({});
   const [selecciones, setSelecciones] = useState({});
+  const [platosCache, setPlatosCache] = useState({});
   const [loading, setLoading] = useState(true);
   const [enviando, setEnviando] = useState(false);
   const [confirmado, setConfirmado] = useState(false);
   const [errorPedido, setErrorPedido] = useState('');
+  const [currentIdx, setCurrentIdx] = useState(0);
 
   const ignorarRestriccion = guestData?.ignorar_restriccion ?? false;
 
@@ -44,6 +46,29 @@ export default function FasesComida({ fechaInicio, fechaFin, guestData, onBack }
     if (!businessId) return;
     getMenusRango(businessId, fechaInicio, fechaFin).then(setMenus).finally(() => setLoading(false));
   }, [businessId, fechaInicio, fechaFin]);
+
+  useEffect(() => {
+    if (!businessId) return;
+    const ids = new Set();
+    Object.values(menus).forEach((menu) => {
+      Object.values(menu?.servicios || {}).forEach((arr) => {
+        (arr || []).forEach((id) => ids.add(id));
+      });
+    });
+    const missing = Array.from(ids).filter((id) => !platosCache[id]);
+    if (missing.length === 0) return;
+    Promise.all(missing.map((id) => getPlatoById(businessId, id)))
+      .then((list) => {
+        setPlatosCache((prev) => {
+          const next = { ...prev };
+          list.forEach((plato) => {
+            if (plato?.id) next[plato.id] = plato;
+          });
+          return next;
+        });
+      })
+      .catch(() => {});
+  }, [menus, businessId, platosCache]);
 
   const handleSeleccionar = (fecha, servicio, platoId, bloqueado) => {
     if (bloqueado) return;
@@ -122,6 +147,9 @@ export default function FasesComida({ fechaInicio, fechaFin, guestData, onBack }
   }
 
   const mensajeRestriccion = getMensajeRestriccion(config.margenReservaHoras);
+  const fechaActual = dias[currentIdx] || dias[0];
+  const menuActual = menus[fechaActual];
+  const bloqueado = !esFechaPermitida(fechaActual, config.margenReservaHoras, ignorarRestriccion);
 
   return (
     <div className="space-y-6">
@@ -129,70 +157,84 @@ export default function FasesComida({ fechaInicio, fechaFin, guestData, onBack }
         <button type="button" onClick={onBack} className="text-emerald-600 hover:underline text-sm">
           ← Cambiar fechas
         </button>
+        <div className="flex items-center gap-3 text-sm text-gray-600">
+          <button
+            type="button"
+            onClick={() => setCurrentIdx((i) => Math.max(0, i - 1))}
+            disabled={currentIdx === 0}
+            className="p-2 rounded-lg border border-gray-200 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <ChevronLeft className="w-4 h-4" />
+          </button>
+          <span className="font-medium">
+            Día {currentIdx + 1} de {dias.length}
+          </span>
+          <button
+            type="button"
+            onClick={() => setCurrentIdx((i) => Math.min(dias.length - 1, i + 1))}
+            disabled={currentIdx === dias.length - 1}
+            className="p-2 rounded-lg border border-gray-200 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <ChevronRight className="w-4 h-4" />
+          </button>
+        </div>
       </div>
 
-      {dias.map((fecha) => {
-        const menu = menus[fecha];
-        if (!menu) return null;
-
-        const bloqueado = !esFechaPermitida(fecha, config.margenReservaHoras, ignorarRestriccion);
-
-        return (
-          <div
-            key={fecha}
-            className={`card relative ${bloqueado ? 'opacity-60 bg-gray-50' : ''}`}
-            title={bloqueado ? mensajeRestriccion : ''}
-          >
-            {bloqueado && (
-              <div
-                className="absolute inset-0 flex items-center justify-center bg-white/80 rounded-xl z-10 cursor-not-allowed"
-                title={mensajeRestriccion}
-              >
-                <div className="text-center p-4">
-                  <Lock className="w-8 h-8 text-gray-400 mx-auto mb-2" />
-                  <p className="text-sm text-gray-500 max-w-[200px]">{mensajeRestriccion}</p>
-                </div>
+      {menuActual ? (
+        <div
+          className={`card relative ${bloqueado ? 'opacity-60 bg-gray-50' : ''}`}
+          title={bloqueado ? mensajeRestriccion : ''}
+        >
+          {bloqueado && (
+            <div
+              className="absolute inset-0 flex items-center justify-center bg-white/80 rounded-xl z-10 cursor-not-allowed"
+              title={mensajeRestriccion}
+            >
+              <div className="text-center p-4">
+                <Lock className="w-8 h-8 text-gray-400 mx-auto mb-2" />
+                <p className="text-sm text-gray-500 max-w-[200px]">{mensajeRestriccion}</p>
               </div>
-            )}
-            <h3 className="font-semibold text-gray-800 mb-4">
-              {new Date(fecha + 'T12:00:00').toLocaleDateString('es-AR', {
-                weekday: 'long',
-                day: 'numeric',
-                month: 'long',
-              })}
-            </h3>
-
-            <div className="space-y-4">
-              {SERVICIOS.map(({ key, label, icon: Icon }) => {
-                const platosIds = menu.servicios[key] || [];
-                const seleccionado = selecciones[fecha]?.[key];
-
-                return (
-                  <div key={key} className="border border-gray-100 rounded-lg p-4">
-                    <div className="flex items-center gap-2 mb-3">
-                      <Icon className="w-4 h-4 text-emerald-600" />
-                      <span className="font-medium text-gray-700">{label}</span>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      {platosIds.map((platoId) => (
-                        <PlatoOption
-                          key={platoId}
-                          businessId={businessId}
-                          platoId={platoId}
-                          seleccionado={seleccionado === platoId}
-                          bloqueado={bloqueado}
-                          onSelect={() => handleSeleccionar(fecha, key, platoId, bloqueado)}
-                          mensajeRestriccion={mensajeRestriccion}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                );
-              })}
             </div>
+          )}
+          <h3 className="font-semibold text-gray-800 mb-4">
+            {new Date(fechaActual + 'T12:00:00').toLocaleDateString('es-AR', {
+              weekday: 'long',
+              day: 'numeric',
+              month: 'long',
+            })}
+          </h3>
+
+          <div className="space-y-4">
+            {SERVICIOS.map(({ key, label, icon: Icon }) => {
+              const platosIds = menuActual.servicios?.[key] || [];
+              const seleccionado = selecciones[fechaActual]?.[key] || '';
+              return (
+                <div key={key} className="border border-gray-100 rounded-lg p-4">
+                  <div className="flex items-center gap-2 mb-3">
+                    <Icon className="w-4 h-4 text-emerald-600" />
+                    <span className="font-medium text-gray-700">{label}</span>
+                  </div>
+                  <select
+                    value={seleccionado}
+                    onChange={(e) => handleSeleccionar(fechaActual, key, e.target.value, bloqueado)}
+                    disabled={bloqueado || platosIds.length === 0}
+                    className="input-field w-full"
+                  >
+                    <option value="">{platosIds.length ? 'Selecciona un plato' : 'Sin opciones'}</option>
+                    {platosIds.map((platoId) => (
+                      <option key={platoId} value={platoId}>
+                        {platosCache[platoId]?.nombre || 'Plato'}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              );
+            })}
           </div>
-        );
-      })}
+        </div>
+      ) : (
+        <div className="card py-12 text-center text-gray-500">No hay menú para este día.</div>
+      )}
 
       {errorPedido && (
         <p className="text-sm text-red-600 bg-red-50 p-3 rounded-lg">{errorPedido}</p>

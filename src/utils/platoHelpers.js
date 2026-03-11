@@ -10,6 +10,7 @@ export function normalizeIngredientes(ingredientes) {
       return { nombre: ing, cantidad: 1, unidad: 'unidad' };
     }
     return {
+      insumoId: ing.insumoId || null,
       nombre: ing.nombre || '',
       cantidad: Number(ing.cantidad) || 1,
       unidad: ing.unidad || 'unidad',

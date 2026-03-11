@@ -3,10 +3,10 @@
  * Filtros rápidos + Grid de Cards + PDF + Modal Editar
  */
 
-import { useState, useEffect } from 'react';
-import { Coffee, UtensilsCrossed, Moon, FileDown, Pencil } from 'lucide-react';
+import { useState, useEffect, useMemo } from 'react';
+import { Coffee, UtensilsCrossed, Moon, FileDown, Pencil, Package } from 'lucide-react';
 import { jsPDF } from 'jspdf';
-import { getRecetario, updatePlato } from '../../firebase/operations';
+import { getRecetario, updatePlato, subscribeInsumos } from '../../firebase/operations';
 import { useBusiness } from '../../context/BusinessContext';
 import { CATEGORIAS_PLATO, UNIDADES } from '../../constants';
 import { normalizeIngredientes, normalizeCategorias } from '../../utils/platoHelpers';
@@ -176,6 +176,7 @@ export default function Recetario() {
       {platoEditando && (
         <ModalEditarPlato
           plato={platoEditando}
+          businessId={businessId}
           onClose={() => setPlatoEditando(null)}
           onGuardar={handleGuardarEdicion}
         />
@@ -184,7 +185,7 @@ export default function Recetario() {
   );
 }
 
-function ModalEditarPlato({ plato, onClose, onGuardar }) {
+function ModalEditarPlato({ plato, onClose, onGuardar, businessId }) {
   const [nombre, setNombre] = useState(plato.nombre);
   const [categorias, setCategorias] = useState(normalizeCategorias(plato.categoria));
   const [tiempoCoccion, setTiempoCoccion] = useState(plato.tiempoCoccion ?? '');
@@ -195,11 +196,60 @@ function ModalEditarPlato({ plato, onClose, onGuardar }) {
   );
   const [procedimiento, setProcedimiento] = useState(plato.procedimiento ?? plato.pasos ?? '');
   const [kcal, setKcal] = useState(plato.kcal ?? '');
+  const [insumos, setInsumos] = useState([]);
 
-  const agregarIng = () => setIngredientes((p) => [...p, { nombre: '', cantidad: 1, unidad: 'gr' }]);
+  useEffect(() => {
+    if (!businessId) return undefined;
+    const unsub = subscribeInsumos(businessId, (list) => {
+      setInsumos(list.filter((i) => i.activo !== false));
+    });
+    return () => unsub?.();
+  }, [businessId]);
+
+  const insumosOptions = useMemo(() => insumos.map((i) => ({
+    value: i.id,
+    label: i.nombre,
+    unidad: i.unidadMedida || 'unidad',
+  })), [insumos]);
+
+  // Autoseleccionar insumo si coincide nombre+unidad
+  useEffect(() => {
+    if (!insumos.length) return;
+    setIngredientes((prev) =>
+      prev.map((ing) => {
+        if (ing.insumoId) return ing;
+        const match = insumosOptions.find(
+          (opt) =>
+            opt.label.toLowerCase().trim() === (ing.nombre || '').toLowerCase().trim() &&
+            opt.unidad === (ing.unidad || '').toLowerCase()
+        );
+        return match
+          ? { ...ing, insumoId: match.value, nombre: match.label, unidad: match.unidad }
+          : ing;
+      })
+    );
+  }, [insumos, insumosOptions]);
+
+  const agregarIng = () => setIngredientes((p) => [...p, { nombre: '', cantidad: 1, unidad: 'gr', insumoId: '' }]);
   const quitarIng = (idx) => setIngredientes((p) => p.filter((_, i) => i !== idx));
   const actualizarIng = (idx, f, v) =>
     setIngredientes((p) => p.map((ing, i) => (i === idx ? { ...ing, [f]: v } : ing)));
+
+  const seleccionarInsumo = (idx, insumoId) => {
+    const insumo = insumosOptions.find((i) => i.value === insumoId);
+    setIngredientes((prev) =>
+      prev.map((ing, i) =>
+        i === idx
+          ? {
+              ...ing,
+              insumoId,
+              nombre: insumo?.label || ing.nombre,
+              unidad: insumo?.unidad || ing.unidad,
+            }
+          : ing
+      )
+    );
+  };
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -208,8 +258,13 @@ function ModalEditarPlato({ plato, onClose, onGuardar }) {
       return;
     }
     const ingData = ingredientes
-      .filter((i) => i.nombre.trim())
-      .map((i) => ({ nombre: i.nombre.trim(), cantidad: Number(i.cantidad) || 1, unidad: i.unidad }));
+      .filter((i) => i.nombre.trim() || i.insumoId)
+      .map((i) => ({
+        insumoId: i.insumoId || null,
+        nombre: (i.nombre || '').trim(),
+        cantidad: Number(i.cantidad) || 1,
+        unidad: i.unidad,
+      }));
     onGuardar({
       nombre,
       categoria: categorias,
@@ -265,21 +320,27 @@ function ModalEditarPlato({ plato, onClose, onGuardar }) {
                 <label className="text-sm text-gray-600">Ingredientes</label>
                 <button type="button" onClick={agregarIng} className="text-sm text-emerald-600">+ Agregar</button>
               </div>
-              <div className="space-y-2 max-h-32 overflow-y-auto">
+              <div className="space-y-2 max-h-40 overflow-y-auto">
                 {ingredientes.map((ing, idx) => (
-                  <div key={idx} className="flex gap-2">
-                    <input
-                      type="text"
-                      value={ing.nombre}
-                      onChange={(e) => actualizarIng(idx, 'nombre', e.target.value)}
-                      className="input-field flex-1 py-1.5"
-                      placeholder="Nombre"
-                    />
+                  <div key={idx} className="flex gap-2 items-center">
+                    <div className="flex-1 flex items-center gap-2">
+                      <Package className="w-4 h-4 text-gray-400" />
+                      <select
+                        value={ing.insumoId || ''}
+                        onChange={(e) => seleccionarInsumo(idx, e.target.value)}
+                        className="input-field py-1.5 text-sm"
+                      >
+                        <option value="">Selecciona insumo</option>
+                        {insumosOptions.map((opt) => (
+                          <option key={opt.value} value={opt.value}>{opt.label}</option>
+                        ))}
+                      </select>
+                    </div>
                     <input
                       type="number"
                       value={ing.cantidad}
                       onChange={(e) => actualizarIng(idx, 'cantidad', e.target.value)}
-                      className="input-field w-20 py-1.5"
+                      className="input-field w-24 py-1.5"
                     />
                     <select
                       value={ing.unidad}

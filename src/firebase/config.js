@@ -4,7 +4,7 @@
  * Con USE_MOCK_DATA=true la app funciona sin Firebase
  */
 
-import { initializeApp } from 'firebase/app';
+import { initializeApp, getApps } from 'firebase/app';
 import { getFirestore } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
 
@@ -20,4 +20,13 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app);
 export const auth = getAuth(app);
+
+let secondaryAuthInstance = null;
+export function getSecondaryAuth() {
+  if (secondaryAuthInstance) return secondaryAuthInstance;
+  const existing = getApps().find((a) => a.name === 'secondary');
+  const secondaryApp = existing || initializeApp(firebaseConfig, 'secondary');
+  secondaryAuthInstance = getAuth(secondaryApp);
+  return secondaryAuthInstance;
+}
 export default app;

@@ -6,13 +6,13 @@
 import { normalizeIngredientes } from './platoHelpers';
 
 /**
- * Agrupa y suma ingredientes por (nombre, unidad)
+ * Agrupa y suma ingredientes por insumoId (si existe) o (nombre, unidad)
  * @param {Array<{platoId: string, ...}>} pedidos
  * @param {Object} platosMap - { platoId: plato }
- * @returns {Array<{nombre, cantidad, unidad}>}
+ * @returns {Array<{nombre, cantidad, unidad, insumoId?: string}>}
  */
 export function sumarIngredientesDePedidos(pedidos, platosMap) {
-  const acum = {}; // key: "nombre|unidad" -> { nombre, cantidad, unidad }
+  const acum = {}; // key: "insumoId|nombre|unidad"
 
   for (const pedido of pedidos) {
     const plato = platosMap[pedido.platoId];
@@ -20,9 +20,9 @@ export function sumarIngredientesDePedidos(pedidos, platosMap) {
 
     const ingredientes = normalizeIngredientes(plato.ingredientes);
     for (const ing of ingredientes) {
-      const key = `${ing.nombre.toLowerCase().trim()}|${ing.unidad}`;
+      const key = `${ing.insumoId || ''}|${ing.nombre.toLowerCase().trim()}|${ing.unidad}`;
       if (!acum[key]) {
-        acum[key] = { nombre: ing.nombre, cantidad: 0, unidad: ing.unidad };
+        acum[key] = { nombre: ing.nombre, cantidad: 0, unidad: ing.unidad, insumoId: ing.insumoId || null };
       }
       // Cada pedido = 1 porción del plato
       acum[key].cantidad += Number(ing.cantidad) || 1;

@@ -20,16 +20,18 @@ import {
   LayoutDashboard,
   Store,
 } from 'lucide-react';
-import { auth } from '../firebase/config';
+import { auth, getSecondaryAuth } from '../firebase/config';
 import {
   getAllNegocios,
   createNegocioCompleto,
-  getTotalPedidosGlobal,
   getAllUsuariosStaffGlobal,
   updateNegocio,
   isSuperAdmin,
   getSuperAdminEmail,
+  subscribePedidosRealtime,
+  computePedidosCounts,
 } from '../firebase/operations';
+import KpiGroup from '../components/Dashboard/KpiGroup';
 
 const getBaseUrl = () => (typeof window !== 'undefined' ? window.location.origin : '');
 
@@ -164,25 +166,34 @@ export default function SuperAdminPage() {
 function DashboardSection() {
   const [totalEmpresas, setTotalEmpresas] = useState(0);
   const [empresasActivas, setEmpresasActivas] = useState(0);
-  const [totalPedidos, setTotalPedidos] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [kpiCounts, setKpiCounts] = useState({ total: 0, desayuno: 0, almuerzo: 0, cena: 0 });
+  const [kpiLoading, setKpiLoading] = useState(true);
 
   const cargar = async () => {
     setLoading(true);
     try {
-      const [negocios, total] = await Promise.all([
-        getAllNegocios(),
-        getTotalPedidosGlobal(),
-      ]);
+      const negocios = await getAllNegocios();
       setTotalEmpresas(negocios.length);
       setEmpresasActivas(negocios.filter((n) => (n.activo ?? n.habilitado ?? true) !== false).length);
-      setTotalPedidos(total);
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => { cargar(); }, []);
+
+  useEffect(() => {
+    const unsub = subscribePedidosRealtime(
+      null,
+      (list) => {
+        setKpiCounts(computePedidosCounts(list));
+        setKpiLoading(false);
+      },
+      () => setKpiLoading(false)
+    );
+    return () => unsub?.();
+  }, []);
 
   if (loading) {
     return <div className="animate-pulse text-gray-500">Cargando KPIs...</div>;
@@ -191,6 +202,11 @@ function DashboardSection() {
   return (
     <div>
       <h1 className="text-2xl font-bold text-gray-800 mb-6">Dashboard Master</h1>
+
+      <div className="mb-6">
+        <KpiGroup counts={kpiCounts} loading={kpiLoading} />
+      </div>
+
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <div className="card flex items-center justify-between">
           <div className="flex items-center gap-4">
@@ -212,8 +228,8 @@ function DashboardSection() {
               <BarChart3 className="w-7 h-7 text-blue-600" />
             </div>
             <div>
-              <p className="text-sm text-gray-500">Total pedidos</p>
-              <p className="text-3xl font-bold text-gray-800">{totalPedidos}</p>
+              <p className="text-sm text-gray-500">Total pedidos (global)</p>
+              <p className="text-3xl font-bold text-gray-800">{kpiCounts.total}</p>
             </div>
           </div>
           <button type="button" onClick={cargar} className="p-2 rounded-lg hover:bg-gray-100 text-gray-600" title="Actualizar">
@@ -270,6 +286,7 @@ function EmpresasSection() {
     setMensaje({ tipo: '', texto: '' });
     setLinkCreado(null);
     const superAdminEmail = getSuperAdminEmail();
+    const secondaryAuth = getSecondaryAuth();
     try {
       await createNegocioCompleto(slugVal, {
         nombreEmpresa: form.nombreEmpresa.trim(),
@@ -281,15 +298,30 @@ function EmpresasSection() {
         password: form.passwordDueño,
         rol: form.rol,
       }, {
-        createAuthUser: (email, password) => createUserWithEmailAndPassword(auth, email, password),
-        signBackIn: () => signInWithEmailAndPassword(auth, superAdminEmail, form.passwordSuperAdmin),
+        // Usar auth secundario para no cerrar la sesión del super admin
+        createAuthUser: (email, password) => createUserWithEmailAndPassword(secondaryAuth, email, password),
+        // Si el email ya existe, intentar loguear con esa password
+        signInExistingUser: (email, password) => signInWithEmailAndPassword(secondaryAuth, email, password),
+        // Ya mantenemos sesión actual; si se provee contraseña, reautenticar best-effort
+        signBackIn: form.passwordSuperAdmin
+          ? () => signInWithEmailAndPassword(auth, superAdminEmail, form.passwordSuperAdmin)
+          : async () => {},
       });
       setLinkCreado(slugVal);
       setMensaje({ tipo: 'success', texto: '¡Cliente creado correctamente!' });
       setForm({ nombreEmpresa: '', slug: '', nombreDueño: '', apellidoDueño: '', dniDueño: '', emailDueño: '', passwordDueño: '', rol: 'admin', passwordSuperAdmin: '' });
       cargar();
     } catch (err) {
-      setMensaje({ tipo: 'error', texto: err.message || 'Error al crear' });
+      const code = err?.code || '';
+      let texto = err?.message || 'Error al crear';
+      if (code === 'auth/email-already-in-use') {
+        texto = 'El email ya existe en Auth. Usá otra contraseña o bórralo en Firebase Auth.';
+      } else if (code === 'auth/invalid-credential') {
+        texto = 'Contraseña incorrecta para el email existente en Auth.';
+      } else if (texto?.toLowerCase().includes('indexof')) {
+        texto = 'Error interno al validar datos. Revisa que email, password y slug tengan valores.';
+      }
+      setMensaje({ tipo: 'error', texto });
     } finally {
       setCreando(false);
     }

@@ -18,6 +18,8 @@ import ModuloCalendario from './components/Admin/ModuloCalendario';
 import ModuloNecesidades from './components/Admin/ModuloNecesidades';
 import ModuloRoles from './components/Admin/ModuloRoles';
 import ModuloConfiguracion from './components/Admin/ModuloConfiguracion';
+import ModuloInsumos from './components/Admin/ModuloInsumos';
+import ModuloCostos from './components/Admin/ModuloCostos';
 import SuperAdminPage from './pages/SuperAdminPage';
 import SetupPage from './pages/SetupPage';
 
@@ -154,6 +156,8 @@ function AppRoutes() {
         <Route path="kpis" element={<ModuloKPIs />} />
         <Route path="calendario" element={<ModuloCalendario />} />
         <Route path="necesidades" element={<ModuloNecesidades />} />
+        <Route path="insumos" element={<ModuloInsumos />} />
+        <Route path="costos" element={<ModuloCostos />} />
         <Route path="roles" element={<ModuloRoles />} />
         <Route path="configuracion" element={<ModuloConfiguracion />} />
       </Route>

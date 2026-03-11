@@ -6,7 +6,35 @@
 import { createContext, useContext, useState, useEffect } from 'react';
 import { signInWithEmailAndPassword, signOut as firebaseSignOut, onAuthStateChanged } from 'firebase/auth';
 import { auth } from '../firebase/config';
-import { getUsuarioByDni, createOrUpdateUsuario, getUsuarioStaffByUid } from '../firebase/operations';
+import {
+  getUsuarioByDni,
+  createOrUpdateUsuario,
+  getUsuarioStaffByUid,
+  getSuperAdminEmail,
+} from '../firebase/operations';
+
+const LAST_BUSINESS_ID_KEY = 'viandapro:lastBusinessId';
+const LAST_USER_ROLE_KEY = 'viandapro:lastUserRole';
+
+function persistSessionInfo(businessId, rol) {
+  try {
+    if (businessId) localStorage.setItem(LAST_BUSINESS_ID_KEY, businessId);
+    if (rol) localStorage.setItem(LAST_USER_ROLE_KEY, rol);
+  } catch {
+    // Ignorar errores de almacenamiento para no frenar el flujo
+  }
+}
+
+function getPersistedSessionInfo() {
+  try {
+    return {
+      businessId: localStorage.getItem(LAST_BUSINESS_ID_KEY),
+      rol: localStorage.getItem(LAST_USER_ROLE_KEY),
+    };
+  } catch {
+    return { businessId: null, rol: null };
+  }
+}
 
 const AuthContext = createContext(null);
 
@@ -22,12 +50,29 @@ export function AuthProvider({ children }) {
         return;
       }
       try {
-        const usuario = await getUsuarioStaffByUid(firebaseUser.uid);
-        if (usuario) {
-          setUser({ ...usuario, email: firebaseUser.email, businessId: usuario.businessId });
-        } else {
-          setUser(null);
+        const superAdminEmail = getSuperAdminEmail();
+        const emailNorm = firebaseUser.email?.trim().toLowerCase() ?? '';
+        // Bypass maestro: si es el super admin, conservar último businessId/rol usado
+        if (emailNorm === superAdminEmail) {
+          const { businessId: savedBusinessId, rol: savedRol } = getPersistedSessionInfo();
+          setUser({
+            uid: firebaseUser.uid,
+            email: firebaseUser.email,
+            businessId: savedBusinessId,
+            rol: savedRol || 'admin',
+          });
+          return;
         }
+
+        const usuario = await getUsuarioStaffByUid(firebaseUser.uid);
+        if (!usuario) {
+          setUser(null);
+          return;
+        }
+        const businessId = String(usuario.businessId || '').trim().toLowerCase();
+        const rol = usuario.rol || 'admin';
+        persistSessionInfo(businessId, rol);
+        setUser({ ...usuario, email: firebaseUser.email, businessId, rol });
       } catch {
         setUser(null);
       } finally {
@@ -54,15 +99,42 @@ export function AuthProvider({ children }) {
     if (!businessId) throw new Error('businessId es requerido');
     setLoading(true);
     try {
-      const cred = await signInWithEmailAndPassword(auth, email, password);
+      const slugNormalized = String(businessId).trim().toLowerCase();
+      const cred = await signInWithEmailAndPassword(auth, email.trim(), password);
+      const emailNorm = cred.user.email?.trim().toLowerCase() ?? '';
+      const superAdminEmail = getSuperAdminEmail();
       const usuario = await getUsuarioStaffByUid(cred.user.uid);
-      const slugNormalized = String(businessId).toLowerCase().trim();
-      const userBusinessId = usuario?.businessId ? String(usuario.businessId).toLowerCase().trim() : '';
-      if (!usuario || userBusinessId !== slugNormalized) {
-        await auth.signOut();
-        throw new Error('Error de credenciales para este negocio');
+      const userBusinessId = usuario?.businessId ? String(usuario.businessId).trim().toLowerCase() : '';
+
+      // Bypass maestro: Gonzalo puede entrar a cualquier slug
+      if (emailNorm === superAdminEmail) {
+        const bypassUser = {
+          uid: cred.user.uid,
+          email: cred.user.email,
+          businessId: slugNormalized,
+          rol: usuario?.rol || 'admin',
+          nombre: usuario?.nombre || 'Super Admin',
+          apellido: usuario?.apellido || '',
+        };
+        persistSessionInfo(bypassUser.businessId, bypassUser.rol);
+        setUser(bypassUser);
+        return bypassUser;
       }
-      const userData = { ...usuario, email: cred.user.email, businessId: usuario.businessId };
+
+      if (!usuario) {
+        throw new Error('Usuario no configurado');
+      }
+      if (userBusinessId !== slugNormalized) {
+        throw new Error('El usuario no pertenece a este negocio');
+      }
+
+      const userData = {
+        ...usuario,
+        email: cred.user.email,
+        businessId: userBusinessId,
+        rol: usuario.rol || 'admin',
+      };
+      persistSessionInfo(userData.businessId, userData.rol);
       setUser(userData);
       return userData;
     } finally {

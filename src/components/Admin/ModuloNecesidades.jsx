@@ -17,8 +17,8 @@ export default function ModuloNecesidades() {
   const [filtros, setFiltros] = useState({
     anio: new Date().getFullYear().toString(),
     mes: '',
-    semana: '',
-    dia: '',
+    fechaDesde: '',
+    fechaHasta: '',
     servicio: '',
   });
   const [loading, setLoading] = useState(true);
@@ -39,27 +39,21 @@ export default function ModuloNecesidades() {
 
   const pedidosFiltrados = useMemo(() => {
     let list = [...pedidos];
+    const { fechaDesde, fechaHasta } = filtros;
+    if (fechaDesde) {
+      list = list.filter((p) => p.fecha >= fechaDesde);
+    }
+    if (fechaHasta) {
+      list = list.filter((p) => p.fecha <= fechaHasta);
+    }
     if (filtros.anio) {
       list = list.filter((p) => new Date(p.fecha).getFullYear() === parseInt(filtros.anio, 10));
     }
     if (filtros.mes) {
       list = list.filter((p) => new Date(p.fecha).getMonth() + 1 === parseInt(filtros.mes, 10));
     }
-    if (filtros.dia) {
-      list = list.filter((p) => p.fecha === filtros.dia);
-    }
     if (filtros.servicio) {
       list = list.filter((p) => p.servicio === filtros.servicio);
-    }
-    if (filtros.semana) {
-      const [year, week] = filtros.semana.split('-W').map(Number);
-      const semanaStart = new Date(year, 0, 1 + (week - 1) * 7);
-      const semanaEnd = new Date(semanaStart);
-      semanaEnd.setDate(semanaEnd.getDate() + 6);
-      list = list.filter((p) => {
-        const d = new Date(p.fecha);
-        return d >= semanaStart && d <= semanaEnd;
-      });
     }
     return list;
   }, [pedidos, filtros]);
@@ -77,17 +71,14 @@ export default function ModuloNecesidades() {
     const ws = XLSX.utils.json_to_sheet(data);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Necesidades');
-    XLSX.writeFile(wb, `necesidades_${filtros.dia || filtros.mes || filtros.semana || 'general'}.xlsx`);
+    const nombreArchivo = [
+      'necesidades',
+      filtros.fechaDesde && `desde-${filtros.fechaDesde}`,
+      filtros.fechaHasta && `hasta-${filtros.fechaHasta}`,
+      filtros.mes && `m${filtros.mes}`,
+    ].filter(Boolean).join('_') || 'necesidades_general';
+    XLSX.writeFile(wb, `${nombreArchivo}.xlsx`);
   };
-
-  const semanasDelAnio = useMemo(() => {
-    const semanas = [];
-    const year = parseInt(filtros.anio, 10) || new Date().getFullYear();
-    for (let w = 1; w <= 52; w++) {
-      semanas.push({ value: `${year}-W${w}`, label: `Semana ${w}` });
-    }
-    return semanas;
-  }, [filtros.anio]);
 
   if (loading) return <div className="animate-pulse text-gray-500">Cargando...</div>;
 
@@ -101,7 +92,7 @@ export default function ModuloNecesidades() {
           <Filter className="w-5 h-5 text-emerald-600" />
           <h2 className="text-lg font-semibold text-gray-800">Filtros</h2>
         </div>
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <div>
             <label className="block text-sm text-gray-600 mb-1">Año</label>
             <select
@@ -130,24 +121,20 @@ export default function ModuloNecesidades() {
             </select>
           </div>
           <div>
-            <label className="block text-sm text-gray-600 mb-1">Semana</label>
-            <select
-              value={filtros.semana}
-              onChange={(e) => setFiltros((f) => ({ ...f, semana: e.target.value }))}
-              className="input-field"
-            >
-              <option value="">Todas</option>
-              {semanasDelAnio.map((s) => (
-                <option key={s.value} value={s.value}>{s.label}</option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm text-gray-600 mb-1">Día</label>
+            <label className="block text-sm text-gray-600 mb-1">Desde</label>
             <input
               type="date"
-              value={filtros.dia}
-              onChange={(e) => setFiltros((f) => ({ ...f, dia: e.target.value }))}
+              value={filtros.fechaDesde}
+              onChange={(e) => setFiltros((f) => ({ ...f, fechaDesde: e.target.value }))}
+              className="input-field"
+            />
+          </div>
+          <div>
+            <label className="block text-sm text-gray-600 mb-1">Hasta</label>
+            <input
+              type="date"
+              value={filtros.fechaHasta}
+              onChange={(e) => setFiltros((f) => ({ ...f, fechaHasta: e.target.value }))}
               className="input-field"
             />
           </div>

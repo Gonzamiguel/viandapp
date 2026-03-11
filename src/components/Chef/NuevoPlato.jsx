@@ -3,13 +3,13 @@
  * Formulario dinámico con ingredientes desglosados
  */
 
-import { useState } from 'react';
-import { Plus, Trash2 } from 'lucide-react';
-import { createPlato } from '../../firebase/operations';
+import { useEffect, useMemo, useState } from 'react';
+import { Plus, Trash2, Package } from 'lucide-react';
+import { createPlato, subscribeInsumos } from '../../firebase/operations';
 import { useBusiness } from '../../context/BusinessContext';
 import { CATEGORIAS_PLATO, UNIDADES } from '../../constants';
 
-const INGREDIENTE_INICIAL = { nombre: '', cantidad: '', unidad: 'gr' };
+const INGREDIENTE_INICIAL = { nombre: '', cantidad: '', unidad: 'gr', insumoId: '' };
 
 export default function NuevoPlato() {
   const { businessId } = useBusiness();
@@ -21,6 +21,23 @@ export default function NuevoPlato() {
   const [kcal, setKcal] = useState('');
   const [guardando, setGuardando] = useState(false);
   const [exito, setExito] = useState(false);
+  const [insumos, setInsumos] = useState([]);
+
+  useEffect(() => {
+    if (!businessId) return undefined;
+    const unsub = subscribeInsumos(businessId, (list) => {
+      setInsumos(list.filter((i) => i.activo !== false));
+    });
+    return () => unsub?.();
+  }, [businessId]);
+
+  const insumosOptions = useMemo(() => {
+    return insumos.map((i) => ({
+      value: i.id,
+      label: i.nombre,
+      unidad: i.unidadMedida || 'unidad',
+    }));
+  }, [insumos]);
 
   const agregarIngrediente = () => {
     setIngredientes((prev) => [...prev, { ...INGREDIENTE_INICIAL }]);
@@ -37,6 +54,22 @@ export default function NuevoPlato() {
     );
   };
 
+  const seleccionarInsumo = (idx, insumoId) => {
+    const insumo = insumosOptions.find((i) => i.value === insumoId);
+    setIngredientes((prev) =>
+      prev.map((ing, i) =>
+        i === idx
+          ? {
+              ...ing,
+              insumoId,
+              nombre: insumo?.label || ing.nombre,
+              unidad: insumo?.unidad || ing.unidad,
+            }
+          : ing
+      )
+    );
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setGuardando(true);
@@ -45,6 +78,7 @@ export default function NuevoPlato() {
       const ingredientesData = ingredientes
         .filter((i) => i.nombre.trim())
         .map((i) => ({
+          insumoId: i.insumoId || null,
           nombre: i.nombre.trim(),
           cantidad: Number(i.cantidad) || 1,
           unidad: i.unidad,
@@ -171,20 +205,26 @@ export default function NuevoPlato() {
                 {ingredientes.map((ing, idx) => (
                   <tr key={idx} className="border-t border-gray-100 hover:bg-gray-50/50">
                     <td className="p-2">
-                      <input
-                        type="text"
-                        value={ing.nombre}
-                        onChange={(e) => actualizarIngrediente(idx, 'nombre', e.target.value)}
-                        className="input-field py-1.5 text-sm"
-                        placeholder="Ej: Huevos"
-                      />
+                      <div className="flex items-center gap-2">
+                        <Package className="w-4 h-4 text-gray-400" />
+                        <select
+                          value={ing.insumoId}
+                          onChange={(e) => seleccionarInsumo(idx, e.target.value)}
+                          className="input-field py-1.5 text-sm"
+                        >
+                          <option value="">Selecciona insumo</option>
+                          {insumosOptions.map((opt) => (
+                            <option key={opt.value} value={opt.value}>{opt.label}</option>
+                          ))}
+                        </select>
+                      </div>
                     </td>
                     <td className="p-2">
                       <input
                         type="number"
                         value={ing.cantidad}
                         onChange={(e) => actualizarIngrediente(idx, 'cantidad', e.target.value)}
-                        className="input-field py-1.5 text-sm"
+                        className="input-field py-1.5 text-sm w-28"
                         placeholder="100"
                         min={0}
                         step="0.01"
@@ -194,7 +234,7 @@ export default function NuevoPlato() {
                       <select
                         value={ing.unidad}
                         onChange={(e) => actualizarIngrediente(idx, 'unidad', e.target.value)}
-                        className="input-field py-1.5 text-sm"
+                        className="input-field py-1.5 text-sm w-24"
                       >
                         {UNIDADES.map((u) => (
                           <option key={u} value={u}>{u}</option>

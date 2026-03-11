@@ -16,6 +16,7 @@ import {
   where,
   orderBy,
   serverTimestamp,
+  onSnapshot,
 } from 'firebase/firestore';
 import { db } from './config';
 
@@ -321,6 +322,67 @@ export async function getPedidos(businessId, filtros = {}) {
   return list;
 }
 
+// --- SUSCRIPCIONES EN TIEMPO REAL ---
+export function subscribePedidosRealtime(businessId, onChange, onError) {
+  const ref = collection(db, 'pedidos');
+  const qRef = businessId ? query(ref, where('businessId', '==', businessId)) : ref;
+  return onSnapshot(qRef, (snap) => {
+    const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    onChange?.(list);
+  }, onError);
+}
+
+export function computePedidosCounts(list = []) {
+  const counts = { total: 0, desayuno: 0, almuerzo: 0, cena: 0 };
+  list.forEach((p) => {
+    counts.total += 1;
+    const s = (p.servicio || '').toLowerCase();
+    if (s === 'desayuno') counts.desayuno += 1;
+    else if (s === 'almuerzo') counts.almuerzo += 1;
+    else if (s === 'cena') counts.cena += 1;
+  });
+  return counts;
+}
+
+// --- INSUMOS ---
+export function subscribeInsumos(businessId, onChange, onError) {
+  if (!businessId) return () => {};
+  const ref = collection(db, 'insumos');
+  const qRef = query(ref, where('businessId', '==', businessId));
+  return onSnapshot(qRef, (snap) => {
+    const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    onChange?.(list);
+  }, onError);
+}
+
+export async function createInsumo(businessId, data) {
+  if (!businessId) throw new Error('businessId es requerido');
+  const ref = collection(db, 'insumos');
+  const payload = {
+    businessId,
+    nombre: (data.nombre || '').trim(),
+    unidadMedida: data.unidadMedida || 'unidad',
+    precioUnitario: Number(data.precioUnitario) || 0,
+    merma: Number(data.merma) || 0,
+    activo: data.activo ?? true,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  };
+  const docRef = await addDoc(ref, payload);
+  return { id: docRef.id, ...payload };
+}
+
+export async function updateInsumo(businessId, id, data) {
+  if (!businessId || !id) throw new Error('businessId e id son requeridos');
+  const ref = doc(db, 'insumos', id);
+  await updateDoc(ref, {
+    ...data,
+    businessId,
+    updatedAt: serverTimestamp(),
+  });
+  return { id, ...data };
+}
+
 // --- SUPER ADMIN (solo Gonzalo) ---
 const SUPER_ADMIN_EMAIL = (import.meta.env.VITE_SUPER_ADMIN_EMAIL || 'gonzalo@ejemplo.com').trim().toLowerCase();
 
@@ -361,14 +423,16 @@ export async function createNegocio(slug, data) {
 
 /**
  * Crea negocio completo en 3 pasos atómicos:
- * 1. Firebase Auth
- * 2. Colección usuarios (doc id = UID)
- * 3. Colección negocios
+ * 1. Colección negocios (doc id = slug)
+ * 2. Firebase Auth
+ * 3. Colección usuarios (doc id = UID)
  * Slug y businessId siempre en minúsculas y sin espacios.
+ * Usa auth secundario para no cerrar la sesión del super admin.
  */
 export async function createNegocioCompleto(slug, data, authHelpers) {
   const slugSanitized = normalizarSlug(slug);
-  const { createAuthUser, signBackIn } = authHelpers;
+  const { createAuthUser, signBackIn, signInExistingUser } = authHelpers;
+  const signBackInSafe = typeof signBackIn === 'function' ? signBackIn : async () => {};
   const email = (data.email || '').trim().toLowerCase();
   const password = data.password;
   if (!email || !password || password.length < 6) {
@@ -379,24 +443,7 @@ export async function createNegocioCompleto(slug, data, authHelpers) {
   const snap = await getDoc(negocioRef);
   if (snap.exists()) throw new Error(`El slug "${slugSanitized}" ya existe`);
 
-  // 1. Firebase Auth: crear usuario
-  const cred = await createAuthUser(email, password);
-
-  // 2. Colección usuarios: doc id = UID, businessId = slug (minúsculas)
-  const rol = ['admin', 'chef'].includes(data.rol) ? data.rol : 'admin';
-  const usuariosRef = doc(db, 'usuarios', cred.uid);
-  await setDoc(usuariosRef, {
-    uid: cred.uid,
-    email,
-    nombre: (data.nombreDueño || '').trim(),
-    apellido: (data.apellidoDueño || '').trim(),
-    dni: (data.dniDueño || '').trim(),
-    businessId: slugSanitized,
-    rol,
-    createdAt: serverTimestamp(),
-  });
-
-  // 3. Colección negocios
+  // Paso A: crear documento de negocio (ID = slug minúsculas)
   const negocioPayload = {
     nombre: (data.nombreEmpresa || slugSanitized).trim(),
     slug: slugSanitized,
@@ -406,12 +453,61 @@ export async function createNegocioCompleto(slug, data, authHelpers) {
     config: { margenReservaHoras: data.margenReservaHoras ?? 72 },
     createdAt: serverTimestamp(),
   };
-  await setDoc(negocioRef, negocioPayload);
 
-  // 4. Re-autenticar al Super Admin
-  await signBackIn();
+  let negocioCreado = false;
+  let result = null;
+  let cred = null;
+  try {
+    await setDoc(negocioRef, negocioPayload);
+    negocioCreado = true;
 
-  return { slug: slugSanitized, ...negocioPayload };
+    // Paso B: Firebase Auth (usuario dueño) - usa cuenta secundaria
+    try {
+      cred = await createAuthUser(email, password);
+    } catch (err) {
+      const code = err?.code || '';
+      if (code === 'auth/email-already-in-use' && typeof signInExistingUser === 'function') {
+        // Si ya existe, intenta loguear con la misma pass para reutilizar UID
+        cred = await signInExistingUser(email, password);
+      } else {
+        throw err;
+      }
+    }
+
+    // Paso C: Colección usuarios (doc id = UID, businessId = slug minúsculas)
+    const uid = cred?.user?.uid || cred?.uid;
+    if (!uid) throw new Error('No se pudo obtener el UID del usuario creado');
+    const rol = ['admin', 'chef'].includes(data.rol) ? data.rol : 'admin';
+    const usuariosRef = doc(db, 'usuarios', uid);
+    await setDoc(usuariosRef, {
+      uid,
+      email,
+      nombre: (data.nombreDueño || '').trim(),
+      apellido: (data.apellidoDueño || '').trim(),
+      dni: (data.dniDueño || '').trim(),
+      businessId: slugSanitized,
+      rol,
+      createdAt: serverTimestamp(),
+    });
+
+    // Vincular UID al negocio recién creado
+    await setDoc(negocioRef, { adminId: uid }, { merge: true });
+
+    result = { slug: slugSanitized, ...negocioPayload, adminId: uid };
+  } catch (err) {
+    // Rollback mínimo si fallan pasos posteriores
+    if (negocioCreado) {
+      try { await deleteDoc(negocioRef); } catch (_) { /* noop */ }
+    }
+    throw err;
+  }
+  // Re-autenticar al Super Admin (best-effort, sin romper creación)
+  try {
+    await signBackInSafe();
+  } catch {
+    // Ignorar error de re-autenticación para no borrar lo creado
+  }
+  return result;
 }
 
 export async function getTotalPedidosGlobal() {
