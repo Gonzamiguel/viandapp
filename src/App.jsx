@@ -15,11 +15,11 @@ import NuevoPlato from './components/Chef/NuevoPlato';
 import Recetario from './components/Chef/Recetario';
 import ModuloKPIs from './components/Admin/ModuloKPIs';
 import ModuloCalendario from './components/Admin/ModuloCalendario';
-import ModuloNecesidades from './components/Admin/ModuloNecesidades';
 import ModuloRoles from './components/Admin/ModuloRoles';
 import ModuloConfiguracion from './components/Admin/ModuloConfiguracion';
 import ModuloInsumos from './components/Admin/ModuloInsumos';
 import ModuloCostos from './components/Admin/ModuloCostos';
+import ModuloIngenieriaMenu from './components/Admin/ModuloIngenieriaMenu';
 import SuperAdminPage from './pages/SuperAdminPage';
 import SetupPage from './pages/SetupPage';
 
@@ -155,9 +155,8 @@ function AppRoutes() {
         <Route index element={<Navigate to="kpis" replace />} />
         <Route path="kpis" element={<ModuloKPIs />} />
         <Route path="calendario" element={<ModuloCalendario />} />
-        <Route path="necesidades" element={<ModuloNecesidades />} />
-        <Route path="insumos" element={<ModuloInsumos />} />
         <Route path="costos" element={<ModuloCostos />} />
+        <Route path="ingenieria-menu" element={<ModuloIngenieriaMenu />} />
         <Route path="roles" element={<ModuloRoles />} />
         <Route path="configuracion" element={<ModuloConfiguracion />} />
       </Route>
@@ -165,6 +164,7 @@ function AppRoutes() {
         <Route index element={<Navigate to="nuevo-plato" replace />} />
         <Route path="nuevo-plato" element={<NuevoPlato />} />
         <Route path="recetario" element={<Recetario />} />
+        <Route path="insumos" element={<ModuloInsumos />} />
       </Route>
       <Route path="/login" element={<Navigate to="/" replace />} />
       <Route path="*" element={<Navigate to="/" replace />} />

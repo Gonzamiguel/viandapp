@@ -1,11 +1,20 @@
+/**
+ * ViandaPro - Análisis de Costos
+ * Filtros por rango de fechas + Lista de Compras Proyectada
+ */
+
 import { useEffect, useMemo, useState } from 'react';
-import { Calculator, Wallet, FileDown, ShoppingCart } from 'lucide-react';
+import { Calculator, FileDown, ShoppingCart } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { jsPDF } from 'jspdf';
 import { useBusiness } from '../../context/BusinessContext';
-import { getRecetario, subscribePedidosRealtime, subscribeInsumos } from '../../firebase/operations';
+import {
+  getRecetario,
+  subscribePedidosRealtime,
+  subscribeInsumos,
+} from '../../firebase/operations';
 import { sumarIngredientesDePedidos } from '../../utils/necesidadesHelpers';
-import { UNIDADES as UNIDADES_PLATOS } from '../../constants';
+import { precioConvertido } from '../../utils/costosHelpers';
 
 function normalizeName(str) {
   return (str || '').trim().toLowerCase();
@@ -15,23 +24,8 @@ function keyNameUnidad(nombre, unidad) {
   return `${normalizeName(nombre)}|${(unidad || '').toLowerCase()}`;
 }
 
-function precioConvertido(insumo, unidadNecesaria) {
-  const precio = Number(insumo?.precioUnitario) || 0;
-  const unidadInsumo = (insumo?.unidadMedida || '').toLowerCase();
-  const unidad = (unidadNecesaria || '').toLowerCase();
-  if (!precio) return 0;
-  if (unidadInsumo === unidad) return precio;
-  // Conversión básica kg<->gr y lt<->ml
-  if (unidadInsumo === 'kg' && unidad === 'gr') return precio / 1000;
-  if (unidadInsumo === 'gr' && unidad === 'kg') return precio * 1000;
-  if ((unidadInsumo === 'l' || unidadInsumo === 'lt') && unidad === 'ml') return precio / 1000;
-  if (unidadInsumo === 'ml' && (unidad === 'l' || unidad === 'lt')) return precio * 1000;
-  // Si no sabemos convertir, devolvemos 0 para alertar con costo 0
-  return 0;
-}
-
 export default function ModuloCostos() {
-  const { businessId } = useBusiness();
+  const { businessId, nombre } = useBusiness();
   const [pedidos, setPedidos] = useState([]);
   const [recetario, setRecetario] = useState([]);
   const [insumos, setInsumos] = useState([]);
@@ -43,23 +37,14 @@ export default function ModuloCostos() {
     if (!businessId) return undefined;
     let cancelled = false;
     setLoading(true);
-
     getRecetario(businessId).then((r) => { if (!cancelled) setRecetario(r); });
-
-    const unsubPedidos = subscribePedidosRealtime(
-      businessId,
-      (list) => {
-        setPedidos(list);
-        setLoading(false);
-      },
-      () => setLoading(false)
-    );
-    const unsubInsumos = subscribeInsumos(
-      businessId,
-      (list) => setInsumos(list.filter((i) => i.activo !== false)),
-      () => {}
-    );
-
+    const unsubPedidos = subscribePedidosRealtime(businessId, (list) => {
+      if (!cancelled) setPedidos(list);
+      setLoading(false);
+    }, () => setLoading(false));
+    const unsubInsumos = subscribeInsumos(businessId, (list) => {
+      if (!cancelled) setInsumos(list.filter((i) => i.activo !== false));
+    });
     return () => {
       cancelled = true;
       unsubPedidos?.();
@@ -90,8 +75,7 @@ export default function ModuloCostos() {
     const byName = {};
     insumos.forEach((i) => {
       byId[i.id] = i;
-      const key = keyNameUnidad(i.nombre, i.unidadMedida);
-      byName[key] = i;
+      byName[keyNameUnidad(i.nombre, i.unidadMedida)] = i;
     });
     return { insumosById: byId, insumosByNombreUnidad: byName };
   }, [insumos]);
@@ -117,9 +101,7 @@ export default function ModuloCostos() {
   }, [necesidades, insumosById, insumosByNombreUnidad]);
 
   const costoTotal = useMemo(() => filas.reduce((acc, f) => acc + (f.costo || 0), 0), [filas]);
-
   const menusTotales = useMemo(() => pedidosEnRango.length, [pedidosEnRango]);
-  const ticketPromedioCosto = menusTotales ? costoTotal / menusTotales : 0;
 
   const comprasProyectadas = useMemo(() => {
     return filas.map((f) => {
@@ -160,34 +142,45 @@ export default function ModuloCostos() {
     XLSX.writeFile(wb, `costos_${rango.desde || hoy}_${rango.hasta || hoy}.xlsx`);
   };
 
-  const exportarPDF = () => {
+  const exportarPDFProveedores = () => {
     const doc = new jsPDF();
-    doc.setFontSize(14);
-    doc.text('Lista de Compras Proyectada', 105, 15, { align: 'center' });
+    doc.setFontSize(16);
+    doc.setTextColor(5, 150, 105);
+    doc.text('LISTA DE COMPRAS PROYECTADA', 105, 15, { align: 'center' });
     doc.setFontSize(10);
-    doc.text(`Empresa: ${nombre || businessId || ''}`, 14, 22);
-    doc.text(`Rango: ${rango.desde || '-'} a ${rango.hasta || '-'}`, 14, 28);
+    doc.setTextColor(0, 0, 0);
+    doc.text(`Proveedor / Negocio: ${nombre || businessId || ''}`, 14, 24);
+    doc.text(`Rango: ${rango.desde || '-'} a ${rango.hasta || '-'}`, 14, 30);
+    doc.text(`Pedidos: ${menusTotales} | Costo total: $${costoTotal.toFixed(2)}`, 14, 36);
 
-    const startY = 35;
-    const headers = ['Insumo', 'Cant. compra', 'Unidad', 'Presupuesto'];
+    const startY = 48;
+    const headers = ['Insumo', 'Cant. compra', 'Unidad', 'Presupuesto ($)'];
     const colX = [14, 90, 130, 160];
     doc.setFontSize(9);
+    doc.setFillColor(245, 245, 245);
+    doc.rect(14, startY - 5, 186, 8);
     headers.forEach((h, i) => doc.text(h, colX[i], startY));
     comprasProyectadas.forEach((c, idx) => {
       const y = startY + 7 + idx * 6;
-      doc.text(String(c.insumoNombre), colX[0], y);
+      doc.text(String(c.insumoNombre).substring(0, 35), colX[0], y);
       doc.text(String(c.cantidadCompra.toFixed(2)), colX[1], y, { align: 'right' });
       doc.text(String(c.unidad || ''), colX[2], y);
       doc.text(`$${c.presupuesto.toFixed(2)}`, colX[3], y, { align: 'right' });
     });
-    doc.save(`compras_${rango.desde || hoy}_${rango.hasta || hoy}.pdf`);
+    const totalY = startY + 7 + comprasProyectadas.length * 6 + 8;
+    doc.setFontSize(10);
+    doc.setFont(undefined, 'bold');
+    doc.text(`Total presupuesto: $${comprasProyectadas.reduce((a, c) => a + c.presupuesto, 0).toFixed(2)}`, 14, totalY);
+    doc.setFont(undefined, 'normal');
+    doc.text('Documento generado por ViandaPro - Para uso con proveedores', 105, doc.internal.pageSize.height - 10, { align: 'center' });
+    doc.save(`lista_compras_${rango.desde || hoy}_${rango.hasta || hoy}.pdf`);
   };
 
   if (loading) return <div className="animate-pulse text-gray-500">Cargando costos...</div>;
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-4">
         <h1 className="text-2xl font-bold text-gray-800 flex items-center gap-2">
           <Calculator className="w-6 h-6 text-emerald-600" />
           Análisis de Costos
@@ -199,7 +192,7 @@ export default function ModuloCostos() {
               type="date"
               value={rango.desde}
               onChange={(e) => setRango((p) => ({ ...p, desde: e.target.value }))}
-              className="input-field"
+              className="input-field w-40"
             />
           </div>
           <div className="flex items-center gap-2">
@@ -208,38 +201,14 @@ export default function ModuloCostos() {
               type="date"
               value={rango.hasta}
               onChange={(e) => setRango((p) => ({ ...p, hasta: e.target.value }))}
-              className="input-field"
+              className="input-field w-40"
             />
           </div>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="card flex items-center justify-between">
-          <div>
-            <p className="text-sm text-gray-500">Menús totales (rango)</p>
-            <p className="text-3xl font-bold text-gray-800">{menusTotales}</p>
-          </div>
-          <Calculator className="w-10 h-10 text-blue-600" />
-        </div>
-        <div className="card flex items-center justify-between">
-          <div>
-            <p className="text-sm text-gray-500">Costo operativo total (rango)</p>
-            <p className="text-3xl font-bold text-gray-800">${costoTotal.toFixed(2)}</p>
-          </div>
-          <Wallet className="w-10 h-10 text-emerald-600" />
-        </div>
-        <div className="card flex items-center justify-between">
-          <div>
-            <p className="text-sm text-gray-500">Ticket promedio de costo (rango)</p>
-            <p className="text-3xl font-bold text-gray-800">${ticketPromedioCosto.toFixed(2)}</p>
-          </div>
-          <Calculator className="w-10 h-10 text-indigo-600" />
-        </div>
-      </div>
-
       <div className="card">
-        <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center justify-between mb-4 flex-wrap gap-4">
           <div className="flex items-center gap-2">
             <ShoppingCart className="w-5 h-5 text-emerald-600" />
             <h2 className="text-lg font-semibold text-gray-800">Lista de Compras Proyectada</h2>
@@ -249,12 +218,15 @@ export default function ModuloCostos() {
               <FileDown className="w-4 h-4" />
               Exportar Excel
             </button>
-            <button type="button" onClick={exportarPDF} className="btn-primary flex items-center gap-2 text-sm">
+            <button type="button" onClick={exportarPDFProveedores} className="btn-primary flex items-center gap-2 text-sm">
               <FileDown className="w-4 h-4" />
-              Exportar PDF
+              PDF para Proveedores
             </button>
           </div>
         </div>
+        <p className="text-sm text-gray-500 mb-4">
+          Consolida todos los insumos (alimentos + packaging) necesarios para el rango de fechas filtrado. {menusTotales} pedidos en el rango.
+        </p>
         <div className="overflow-auto">
           <table className="w-full text-sm">
             <thead>

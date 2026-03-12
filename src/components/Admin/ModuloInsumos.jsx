@@ -114,16 +114,19 @@ export default function ModuloInsumos() {
             </select>
           </div>
           <div>
-            <label className="block text-sm text-gray-600 mb-1">Precio unitario</label>
+            <label className="block text-sm text-gray-600 mb-1">Precio por unidad de compra</label>
             <input
               type="number"
               value={form.precioUnitario}
               onChange={(e) => setForm((f) => ({ ...f, precioUnitario: e.target.value }))}
               className="input-field"
-              placeholder="0"
+              placeholder="Ej: 1000 (por 1 kg)"
               step="0.01"
               min={0}
             />
+            <p className="text-xs text-gray-500 mt-1">
+              Precio total de la unidad (ej: $1000 por 1 kg). El sistema convierte automáticamente a la cantidad de la receta.
+            </p>
           </div>
           <div>
             <label className="block text-sm text-gray-600 mb-1">Merma (%)</label>

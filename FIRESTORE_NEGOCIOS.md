@@ -22,11 +22,21 @@ Para que ViandaPro funcione en modo multi-tenant, debés crear al menos un docum
   "slug": "donata",
   "logoUrl": "https://ejemplo.com/logo.png",
   "config": {
-    "margenReservaHoras": 72
+    "margenReservaHoras": 72,
+    "factorQ": 0,
+    "factorQSpice": 0,
+    "precioVentaUnico": 0,
+    "costoPonderadoObjetivo": null,
+    "packagingPorUnidad": 0,
+    "gastosFijos": { "sueldos": 0, "alquiler": 0, "otros": 0 }
   },
   "adminId": "email-del-admin@ejemplo.com"
 }
 ```
+
+**Colección `inventario_mensual`** (Verdad Financiera):
+- Doc ID: `{businessId}_{anno}_{mes}` (ej: `donata_2025_3`)
+- Campos: `businessId`, `anno`, `mes`, `invInicial`, `compras`, `invFinal`, `updatedAt`
 
 ## Cómo crear el primer negocio
 

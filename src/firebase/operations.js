@@ -42,11 +42,18 @@ export async function updateNegocio(slug, data) {
 
 // --- CONFIGURACIÓN (desde negocio) ---
 export async function getConfiguracion(businessId) {
-  if (!businessId) return { margenReservaHoras: 72 };
+  if (!businessId) return { margenReservaHoras: 72, factorQ: 0, factorQSpice: 0, precioVentaUnico: 0 };
   const negocio = await getNegocioBySlug(businessId);
   const config = negocio?.config ?? {};
   return {
     margenReservaHoras: config.margenReservaHoras ?? 72,
+    factorQ: config.factorQ ?? 0,
+    factorQSpice: config.factorQSpice ?? 0,
+    precioVentaUnico: config.precioVentaUnico ?? config.precioVentaFijo ?? 0,
+    precioVentaFijo: config.precioVentaFijo ?? config.precioVentaUnico ?? 0,
+    costoPonderadoObjetivo: config.costoPonderadoObjetivo ?? null,
+    packagingPorUnidad: config.packagingPorUnidad ?? 0,
+    gastosFijos: config.gastosFijos ?? { sueldos: 0, alquiler: 0, otros: 0 },
   };
 }
 
@@ -156,9 +163,10 @@ export async function updateUsuarioCliente(businessId, dni, data) {
 // --- PLATOS ---
 function normalizarPlatoParaFirestore(data) {
   const ingredientes = (data.ingredientes || [])
-    .filter((i) => i?.nombre?.trim())
+    .filter((i) => i?.nombre?.trim() || i?.insumoId)
     .map((i) => ({
-      nombre: String(i.nombre).trim(),
+      insumoId: i.insumoId || null,
+      nombre: String(i.nombre || '').trim(),
       cantidad: Number(i.cantidad) || 1,
       unidad: i.unidad || 'unidad',
     }));
@@ -381,6 +389,33 @@ export async function updateInsumo(businessId, id, data) {
     updatedAt: serverTimestamp(),
   });
   return { id, ...data };
+}
+
+// --- INVENTARIO MENSUAL (Verdad Financiera) ---
+function inventarioMensualId(businessId, anno, mes) {
+  return `${businessId}_${anno}_${mes}`;
+}
+
+export async function getInventarioMensual(businessId, anno, mes) {
+  if (!businessId || !anno || !mes) return null;
+  const ref = doc(db, 'inventario_mensual', inventarioMensualId(businessId, anno, mes));
+  const snap = await getDoc(ref);
+  return snap.exists() ? { id: snap.id, ...snap.data() } : null;
+}
+
+export async function setInventarioMensual(businessId, anno, mes, data) {
+  if (!businessId || !anno || !mes) throw new Error('businessId, anno y mes son requeridos');
+  const ref = doc(db, 'inventario_mensual', inventarioMensualId(businessId, anno, mes));
+  await setDoc(ref, {
+    businessId,
+    anno: Number(anno),
+    mes: Number(mes),
+    invInicial: Number(data.invInicial) || 0,
+    compras: Number(data.compras) || 0,
+    invFinal: Number(data.invFinal) || 0,
+    updatedAt: serverTimestamp(),
+  }, { merge: true });
+  return { anno, mes, ...data };
 }
 
 // --- SUPER ADMIN (solo Gonzalo) ---

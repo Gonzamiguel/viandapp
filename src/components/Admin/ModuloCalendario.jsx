@@ -1,20 +1,27 @@
 /**
  * ViandaPro - Armador de Calendario (Rediseño UX)
- * Calendario compacto + Panel de configuración lateral
+ * Calendario compacto + Panel de configuración lateral + Termómetro de Rentabilidad Diaria
  */
 
-import { useState, useEffect } from 'react';
-import { ChevronLeft, ChevronRight, Save, Coffee, UtensilsCrossed, Moon } from 'lucide-react';
-import { getRecetario, getMenuDiario, updateMenuDiario } from '../../firebase/operations';
+import { useState, useEffect, useMemo } from 'react';
+import { ChevronLeft, ChevronRight, Save, Coffee, UtensilsCrossed, Moon, AlertTriangle, Thermometer } from 'lucide-react';
+import { getRecetario, getMenuDiario, updateMenuDiario, getConfiguracion, subscribeInsumos } from '../../firebase/operations';
 import { useBusiness } from '../../context/BusinessContext';
 import { CATEGORIAS_PLATO } from '../../constants';
 import { normalizeCategorias } from '../../utils/platoHelpers';
+import { calcularCostoNetaPlato } from '../../utils/costosHelpers';
+
+function keyNameUnidad(nombre, unidad) {
+  return `${(nombre || '').trim().toLowerCase()}|${(unidad || '').toLowerCase()}`;
+}
 
 const DIAS_SEMANA = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
 
 export default function ModuloCalendario() {
   const { businessId } = useBusiness();
   const [recetario, setRecetario] = useState([]);
+  const [insumos, setInsumos] = useState([]);
+  const [config, setConfig] = useState({ factorQ: 0, factorQSpice: 0, precioVentaUnico: 0, costoPonderadoObjetivo: null });
   const [mesActual, setMesActual] = useState(new Date());
   const [diaSeleccionado, setDiaSeleccionado] = useState(null);
   const [menuDelDia, setMenuDelDia] = useState(null);
@@ -24,6 +31,9 @@ export default function ModuloCalendario() {
   useEffect(() => {
     if (!businessId) return;
     getRecetario(businessId).then(setRecetario);
+    getConfiguracion(businessId).then(setConfig);
+    const unsub = subscribeInsumos(businessId, (list) => setInsumos(list.filter((i) => i.activo !== false)));
+    return () => unsub?.();
   }, [businessId]);
 
   useEffect(() => {
@@ -42,6 +52,47 @@ export default function ModuloCalendario() {
     Almuerzo: recetario.filter((p) => normalizeCategorias(p.categoria).includes('Almuerzo')),
     Cena: recetario.filter((p) => normalizeCategorias(p.categoria).includes('Cena')),
   };
+
+  const { insumosById, insumosByNombreUnidad } = useMemo(() => {
+    const byId = {};
+    const byName = {};
+    insumos.forEach((i) => {
+      byId[i.id] = i;
+      byName[keyNameUnidad(i.nombre, i.unidadMedida)] = i;
+    });
+    return { insumosById: byId, insumosByNombreUnidad: byName };
+  }, [insumos]);
+
+  const platosMap = useMemo(() => {
+    const m = {};
+    recetario.forEach((p) => { m[p.id] = p; });
+    return m;
+  }, [recetario]);
+
+  const costoPonderadoDia = useMemo(() => {
+    if (!menuDelDia) return 0;
+    const ids = new Set();
+    ['desayuno', 'almuerzo', 'cena'].forEach((s) => {
+      (menuDelDia[s] || []).forEach((id) => ids.add(id));
+    });
+    if (ids.size === 0) return 0;
+    const factorQ = config.factorQ ?? 0;
+    const factorQSpice = config.factorQSpice ?? 0;
+    let suma = 0;
+    ids.forEach((id) => {
+      const plato = platosMap[id];
+      if (plato) {
+        const { costoNeta } = calcularCostoNetaPlato(plato, insumosById, insumosByNombreUnidad, factorQ, factorQSpice);
+        suma += costoNeta;
+      }
+    });
+    return suma / ids.size;
+  }, [menuDelDia, platosMap, insumosById, insumosByNombreUnidad, config.factorQ, config.factorQSpice]);
+
+  const precioVenta = config.precioVentaUnico ?? 0;
+  const umbral35 = precioVenta > 0 ? precioVenta * 0.35 : null;
+  const objetivo = config.costoPonderadoObjetivo ?? null;
+  const desbalanceado = (umbral35 != null && costoPonderadoDia > umbral35) || (objetivo != null && objetivo > 0 && costoPonderadoDia > objetivo);
 
   const togglePlato = (servicio, platoId) => {
     const serv = menuDelDia?.[servicio] || [];
@@ -182,6 +233,49 @@ export default function ModuloCalendario() {
               <div className="py-12 text-center text-gray-500 animate-pulse">Cargando...</div>
             ) : (
               <div className="mt-6 space-y-6">
+                {/* Termómetro de Rentabilidad Diaria */}
+                <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Thermometer className="w-5 h-5 text-emerald-600" />
+                    <h3 className="font-medium text-gray-700">Rentabilidad Diaria</h3>
+                  </div>
+                  <div className="flex items-center gap-4">
+                    <div className="flex-1">
+                      <div className="h-3 bg-gray-200 rounded-full overflow-hidden">
+                        <div
+                          className={`h-full transition-all ${
+                            desbalanceado ? 'bg-red-500' : 'bg-emerald-500'
+                          }`}
+                          style={{
+                            width: umbral35 && umbral35 > 0
+                              ? `${Math.min(100, (costoPonderadoDia / umbral35) * 100)}%`
+                              : objetivo && objetivo > 0
+                                ? `${Math.min(100, (costoPonderadoDia / objetivo) * 100)}%`
+                                : `${Math.min(100, (costoPonderadoDia / 600) * 100)}%`,
+                          }}
+                        />
+                      </div>
+                      <p className="text-xs text-gray-500 mt-1">
+                        Costo ponderado hoy: ${costoPonderadoDia.toFixed(2)}
+                        {umbral35 && precioVenta > 0 && (
+                          <span className="ml-2">| Límite 35%: ${umbral35.toFixed(2)}</span>
+                        )}
+                        {objetivo && objetivo > 0 && !umbral35 && (
+                          <span className="ml-2">| Objetivo: ${objetivo.toFixed(2)}</span>
+                        )}
+                      </p>
+                    </div>
+                  </div>
+                  {desbalanceado && (
+                    <div className="mt-3 flex items-start gap-2 p-3 rounded-lg bg-red-50 border border-red-100">
+                      <AlertTriangle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
+                      <p className="text-sm text-red-700 font-medium">
+                        Atención: El costo de hoy (${costoPonderadoDia.toFixed(2)}) compromete tu margen. Considerá equilibrar con platos de menor costo.
+                      </p>
+                    </div>
+                  )}
+                </div>
+
                 {CATEGORIAS_PLATO.map((cat) => {
                   const servicio = cat.toLowerCase();
                   const platos = platosPorCategoria[cat] || [];

@@ -15,14 +15,14 @@ export default function StaffLayout() {
   const CHEF_NAV = [
     { to: `/staff/${businessSlug}/chef/nuevo-plato`, label: 'Nuevo Plato', icon: '➕' },
     { to: `/staff/${businessSlug}/chef/recetario`, label: 'Recetario / Platos', icon: '📋' },
+    { to: `/staff/${businessSlug}/chef/insumos`, label: 'Insumos', icon: '🧺' },
   ];
 
   const ADMIN_NAV = [
     { to: `/staff/${businessSlug}/admin/kpis`, label: 'Dashboard / KPIs', icon: '📊' },
     { to: `/staff/${businessSlug}/admin/calendario`, label: 'Calendario', icon: '📅' },
-    { to: `/staff/${businessSlug}/admin/necesidades`, label: 'Necesidades / Stock', icon: '📦' },
-    { to: `/staff/${businessSlug}/admin/insumos`, label: 'Insumos', icon: '🧺' },
     { to: `/staff/${businessSlug}/admin/costos`, label: 'Análisis de Costos', icon: '💰' },
+    { to: `/staff/${businessSlug}/admin/ingenieria-menu`, label: 'Ingeniería de Menú', icon: '📈' },
     { to: `/staff/${businessSlug}/admin/roles`, label: 'Mi Equipo', icon: '👥' },
     { to: `/staff/${businessSlug}/admin/configuracion`, label: 'Configuración', icon: '⚙️' },
   ];

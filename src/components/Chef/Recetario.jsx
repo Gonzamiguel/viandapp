@@ -4,12 +4,17 @@
  */
 
 import { useState, useEffect, useMemo } from 'react';
-import { Coffee, UtensilsCrossed, Moon, FileDown, Pencil, Package } from 'lucide-react';
+import { Coffee, UtensilsCrossed, Moon, FileDown, Pencil, Package, DollarSign } from 'lucide-react';
 import { jsPDF } from 'jspdf';
-import { getRecetario, updatePlato, subscribeInsumos } from '../../firebase/operations';
+import { getRecetario, updatePlato, subscribeInsumos, getConfiguracion } from '../../firebase/operations';
 import { useBusiness } from '../../context/BusinessContext';
 import { CATEGORIAS_PLATO, UNIDADES } from '../../constants';
 import { normalizeIngredientes, normalizeCategorias } from '../../utils/platoHelpers';
+import { calcularCostoNetaPlato } from '../../utils/costosHelpers';
+
+function keyNameUnidad(nombre, unidad) {
+  return `${(nombre || '').trim().toLowerCase()}|${(unidad || '').toLowerCase()}`;
+}
 
 const SERVICIOS = [
   { key: 'Desayuno', icon: Coffee },
@@ -20,6 +25,8 @@ const SERVICIOS = [
 export default function Recetario() {
   const { businessId } = useBusiness();
   const [recetario, setRecetario] = useState([]);
+  const [insumos, setInsumos] = useState([]);
+  const [config, setConfig] = useState({ factorQ: 0, factorQSpice: 0 });
   const [filtro, setFiltro] = useState('');
   const [platoEditando, setPlatoEditando] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -27,7 +34,25 @@ export default function Recetario() {
   useEffect(() => {
     if (!businessId) return;
     getRecetario(businessId).then(setRecetario).finally(() => setLoading(false));
+    getConfiguracion(businessId).then(setConfig);
+    const unsub = subscribeInsumos(businessId, (list) => setInsumos(list.filter((i) => i.activo !== false)));
+    return () => unsub?.();
   }, [businessId]);
+
+  const { insumosById, insumosByNombreUnidad } = useMemo(() => {
+    const byId = {};
+    const byName = {};
+    insumos.forEach((i) => {
+      byId[i.id] = i;
+      byName[keyNameUnidad(i.nombre, i.unidadMedida)] = i;
+    });
+    return { insumosById: byId, insumosByNombreUnidad: byName };
+  }, [insumos]);
+
+  const getCostoNeta = (plato) => {
+    const { costoNeta } = calcularCostoNetaPlato(plato, insumosById, insumosByNombreUnidad, config.factorQ ?? 0, config.factorQSpice ?? 0);
+    return costoNeta;
+  };
 
   const platosFiltrados = filtro
     ? recetario.filter((p) => normalizeCategorias(p.categoria).includes(filtro))
@@ -150,7 +175,13 @@ export default function Recetario() {
                 </span>
               ))}
             </div>
-            <p className="text-emerald-600 font-medium mb-4">{plato.kcal || 0} kcal</p>
+            <div className="flex items-center gap-3 mb-4">
+              <p className="text-emerald-600 font-medium">{plato.kcal || 0} kcal</p>
+              <span className="flex items-center gap-1 text-sm text-gray-600">
+                <DollarSign className="w-4 h-4" />
+                Costo Neta: ${getCostoNeta(plato).toFixed(2)}
+              </span>
+            </div>
             <div className="flex gap-2">
               <button
                 type="button"
